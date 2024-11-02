@@ -1,23 +1,84 @@
 pipeline {
     agent any
+    environment {
+        SONARQUBE_SERVER = 'sonarqube-server' // Nom du serveur SonarQube configuré dans Jenkins
+        SONARQUBE_URL = 'http://195.15.200.226:9000' // Remplacez par l'URL de votre serveur SonarQube
+        MAVEN_OPTS = "-Dsonar.host.url=$SONARQUBE_URL"
+    }
     stages {
-        stage("clone"){
-            steps{
+        stage("Clone") {
+            steps {
+                // Cloner le code source depuis le dépôt Git
                 sh "git clone https://github.com/iamKrishnendu/selenium-docker.git"
             }
         }
-        stage('build') {
+        stage('Build') {
             steps {
+                // Vérifier la version de Maven et construire le projet
                 sh 'mvn --version'
                 sh 'mvn clean install -Dbrowser=chrome'
             }
         }
+        stage('SonarQube Analysis') {
+            steps {
+                // Exécuter l'analyse SonarQube
+                withSonarQubeEnv('sonarqube-server') { // Utilise l'instance SonarQube configurée dans Jenkins
+                    sh 'mvn sonar:sonar -Dsonar.projectKey=selenium-docker -Dsonar.login=${SONAR_TOKEN}'
+                }
+            }
+        }
+        stage('Quality Gate') {
+            steps {
+                // Attendre le résultat de l'analyse SonarQube
+                script {
+                    timeout(time: 1, unit: 'MINUTES') {
+                        def qg = waitForQualityGate()
+                        if (qg.status != 'OK') {
+                            error "Qualité de code non conforme : ${qg.status}"
+                        }
+                    }
+                }
+            }
+        }
+        stage('Archive Artifacts') {
+            steps {
+                // Archiver les artefacts générés
+                archiveArtifacts artifacts: '**/target/*.jar', allowEmptyArchive: true
+            }
+        }
     }
-
-post{
-     always{
-        echo "Build ${currentBuild.fullDisplayName} has ${currentBuild.currentResult}."
-        cleanWs()
+    post {
+        always {
+            // Nettoyer l'espace de travail après chaque exécution du pipeline
+            echo "Build ${currentBuild.fullDisplayName} has ${currentBuild.currentResult}."
+            cleanWs()
         }
     }
 }
+
+
+
+
+// pipeline {
+//     agent any
+//     stages {
+//         stage("clone"){
+//             steps{
+//                 sh "git clone https://github.com/iamKrishnendu/selenium-docker.git"
+//             }
+//         }
+//         stage('build') {
+//             steps {
+//                 sh 'mvn --version'
+//                 sh 'mvn clean install -Dbrowser=chrome'
+//             }
+//         }
+//     }
+
+// post{
+//      always{
+//         echo "Build ${currentBuild.fullDisplayName} has ${currentBuild.currentResult}."
+//         cleanWs()
+//         }
+//     }
+// }
