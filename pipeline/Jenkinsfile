@@ -1,57 +1,71 @@
 pipeline {
     agent any
+
     environment {
-        SONARQUBE_SERVER = 'sonarqube-server' // Nom du serveur SonarQube configuré dans Jenkins
-        SONARQUBE_URL = 'http://195.15.200.226:9000' // Remplacez par l'URL de votre serveur SonarQube
-        MAVEN_OPTS = "-Dsonar.host.url=$SONARQUBE_URL"
+        SONAR_TOKEN = credentials('sonar_jenkins') // Jeton SonarQube
+        SONARQUBE_URL = 'http://195.15.200.226:9000' // URL de SonarQube
     }
+
     stages {
+        // Étape de clonage du dépôt Git
         stage("Clone") {
             steps {
-                // Cloner le code source depuis le dépôt Git
                 sh "git clone https://github.com/iamKrishnendu/selenium-docker.git"
             }
         }
-        stage('Build') {
+
+        // Étape de construction du projet Maven
+        stage("Build") {
             steps {
-                // Vérifier la version de Maven et construire le projet
-                sh 'mvn --version'
-                sh 'mvn clean install -Dbrowser=chrome'
+                sh 'mvn --version' // Vérifie la version de Maven installée
+                sh 'mvn clean install -Dbrowser=chrome' // Compile et construit le projet en spécifiant le navigateur "chrome"
             }
         }
-        stage('SonarQube Analysis') {
+
+        // Étape d'analyse SonarQube
+        stage("SonarQube Analysis") {
             steps {
-                // Exécuter l'analyse SonarQube
-                withSonarQubeEnv('sonarqube-server') { // Utilise l'instance SonarQube configurée dans Jenkins
-                    sh 'mvn sonar:sonar -Dsonar.projectKey=selenium-docker -Dsonar.login=${SONAR_TOKEN}'
+                withSonarQubeEnv('sonarqube') { // Utilisation de la configuration SonarQube définie dans Jenkins
+                    sh 'mvn sonar:sonar ' +
+                       '-Dsonar.projectKey=selenium-docker ' + // Clé unique du projet dans SonarQube
+                       '-Dsonar.host.url=$SONARQUBE_URL ' + // URL de l'instance SonarQube
+                       '-Dsonar.login=$SONAR_TOKEN' // Jeton d'authentification pour SonarQube
                 }
             }
         }
-        stage('Quality Gate') {
+
+        // Étape de vérification du Quality Gate
+        stage("Quality Gate") {
             steps {
-                // Attendre le résultat de l'analyse SonarQube
                 script {
-                    timeout(time: 1, unit: 'MINUTES') {
-                        def qg = waitForQualityGate()
-                        if (qg.status != 'OK') {
-                            error "Qualité de code non conforme : ${qg.status}"
+                    timeout(time: 1, unit: 'MINUTES') { // Timeout de 1 minute pour éviter l'attente indéfinie
+                        def qualityGate = waitForQualityGate() // Attente des résultats du Quality Gate de SonarQube
+                        if (qualityGate.status != 'OK') {
+                            error "Quality Gate failed: ${qualityGate.status}" // Échec si le Quality Gate n'est pas respecté
                         }
                     }
                 }
             }
         }
-        stage('Archive Artifacts') {
+
+        // Étape de déploiement vers le serveur Tomcat
+        stage("Deploy to Tomcat") {
             steps {
-                // Archiver les artefacts générés
-                archiveArtifacts artifacts: '**/target/*.jar', allowEmptyArchive: true
+                // Utilisation des informations d'identification SSH pour accéder au serveur Tomcat
+                sshagent(credentials: ['production']) { // ID de credentials SSH pour l'accès au serveur
+                    sh '''
+                        scp -o StrictHostKeyChecking=no target/*.war debian@195.15.207.39:/opt/tomcat/webapps/
+                    '''
+                }
             }
         }
     }
+
+    // Actions post-pipeline
     post {
         always {
-            // Nettoyer l'espace de travail après chaque exécution du pipeline
-            echo "Build ${currentBuild.fullDisplayName} has ${currentBuild.currentResult}."
-            cleanWs()
+            echo "Build ${currentBuild.fullDisplayName} has ${currentBuild.currentResult}." // Résultat du build
+            cleanWs() // Nettoyage de l'espace de travail
         }
     }
 }
